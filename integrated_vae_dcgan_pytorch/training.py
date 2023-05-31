@@ -33,11 +33,19 @@ class CustomImageDataset(Dataset):
         delta_vmap = torch.tensor(data['delta_vmap'], dtype=torch.float)
         delta_vmap = torch.reshape(delta_vmap, (1, 64, 64))
         output["delta_vmap"] = delta_vmap
-        dmap = torch.tensor(data['dmap'], dtype=torch.float)
+
+        dmap = data['dmap']
+        for idx, row in enumerate(dmap):
+            for jdx, pixel in enumerate(row):
+                if pixel > 300:
+                    dmap[idx][jdx] = 0
+
+        dmap = torch.tensor(dmap, dtype=torch.float)
         dmap = torch.reshape(dmap, (1, 64, 64))
-        nmap = torch.tensor(data['nmap'], dtype=torch.float)
-        nmap = nmap.permute(2, 0, 1)
-        combined_map = torch.cat((dmap, nmap), dim=0)
+        # nmap = torch.tensor(data['nmap'], dtype=torch.float)
+        # nmap = nmap.permute(2, 0, 1)
+        # combined_map = torch.cat((dmap, nmap), dim=0)
+        combined_map = dmap
 
         if self.transform:
             combined_map = self.transform(combined_map)

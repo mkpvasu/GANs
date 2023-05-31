@@ -9,7 +9,7 @@ class VanillaVAEEncoder:
                  **kwargs) -> None:
         super(VanillaVAEEncoder, self).__init__()
 
-        self.in_channels = 4
+        self.in_channels = 1
         self.out_channels = 1
         self.latent_dim = latent_dim
         self.hidden_dims = [32, 64, 128]
