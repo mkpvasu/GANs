@@ -217,7 +217,7 @@ class Training:
 
 class Visualize_Model:
     def __init__(self):
-        self.gen_imgs, self.gen_losses, self.dis_losses = Training(n_epochs=5).execute()
+        self.gen_imgs, self.gen_losses, self.dis_losses = Training(n_epochs=10).execute()
 
     def gen_dis_loss_training(self):
         plt.figure(figsize=(10, 5))
@@ -237,7 +237,7 @@ class Visualize_Model:
 
         HTML(ani.to_jshtml())
         plt.show()
-        ani.save("dcgan_animation.gif", writer="pillow", fps=2)
+        ani.save("vae_dcgan_animation.gif", writer="pillow", fps=2)
 
 
 def main():
