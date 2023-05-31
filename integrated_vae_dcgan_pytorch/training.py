@@ -1,12 +1,11 @@
 import os
+import glob
 import random
 import torch
 import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets
+from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import numpy as np
@@ -15,37 +14,56 @@ import matplotlib.animation as animation
 from IPython.display import HTML
 from generator import Generator
 from discriminator import Discriminator
+from vae_encoder import VanillaVAEEncoder
 
 device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
 
 
+class CustomImageDataset(Dataset):
+    def __init__(self, path, pattern, transform=None):
+        self.file_list = glob.glob(os.path.join(path, pattern))
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def __getitem__(self, idx):
+        output = {}
+        data = np.load(self.file_list[idx])
+        delta_vmap = torch.tensor(data['delta_vmap'], dtype=torch.float)
+        delta_vmap = torch.reshape(delta_vmap, (1, 64, 64))
+        output["delta_vmap"] = delta_vmap
+        dmap = torch.tensor(data['dmap'], dtype=torch.float)
+        dmap = torch.reshape(dmap, (1, 64, 64))
+        nmap = torch.tensor(data['nmap'], dtype=torch.float)
+        nmap = nmap.permute(2, 0, 1)
+        combined_map = torch.cat((dmap, nmap), dim=0)
+
+        if self.transform:
+            combined_map = self.transform(combined_map)
+        output["combined_map"] = combined_map
+
+        return output
+
+
 class Data:
     def __init__(self):
-        self.dataroot = os.path.join(os.getcwd(), "celeba")
+        self.dataroot = os.path.join(os.getcwd(), "data", "dcgan_data")
+        self.pattern = "d_*.npz"
         self.image_size = 64
         self.batch_size = 16
         self.shuffle = True
         self.num_workers = 2
         self.device = device
+        self.transform = transforms.Compose([
+            transforms.Resize((64, 64)),
+            transforms.Normalize(mean=0.5, std=0.5),  # Add data normalization
+        ])
 
     def dataset_prep(self):
-        dataset = datasets.ImageFolder(root=self.dataroot,
-                                       transform=transforms.Compose([
-                                           transforms.Resize(self.image_size),
-                                           transforms.CenterCrop(self.image_size),
-                                           transforms.ToTensor(),
-                                           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                                       ]))
+        dataset = CustomImageDataset(path=self.dataroot, pattern=self.pattern, transform=self.transform)
         dataloader = DataLoader(dataset=dataset, batch_size=self.batch_size, shuffle=self.shuffle,
                                 num_workers=self.num_workers)
-
-        # batch = next(iter(dataloader))
-        # plt.figure(figsize=(8, 8))
-        # plt.axis("off")
-        # plt.title("Training Images")
-        # plt.imshow(np.transpose(vutils.make_grid(batch[0].to(self.device)[:64], padding=2,
-        #                                          normalize=True).cpu(), (1, 2, 0)))
-        # plt.show()
         return dataloader
 
 
@@ -57,9 +75,9 @@ class Training:
         random.seed(self.manualSeed)
         torch.manual_seed(self.manualSeed)
         # rgb image
-        self.n_channels = 3
+        self.n_channels = 1
         # latent space input
-        self.latent_embedding_size = 128
+        self.latent_embedding_size = 64
         # size of generator feature map
         self.gen_feature_map_size = 64
         # size of discriminator feature map
@@ -92,6 +110,8 @@ class Training:
             nn.init.constant_(gen.bias.data, 0)
 
     def training(self):
+        # initialize vae encoder
+        vae_encoder = VanillaVAEEncoder(latent_dim=self.latent_embedding_size)
         # initialize generator
         generator = Generator(self.latent_embedding_size, self.gen_feature_map_size,
                               self.n_channels).to(device=self.device)
@@ -124,7 +144,7 @@ class Training:
                 # Train with all-real batch
                 discriminator.zero_grad()
                 # Format batch
-                real_cpu = data[0].to(device)
+                real_cpu = data["delta_vmap"].to(device)
                 b_size = real_cpu.size(0)
                 label = torch.full((b_size,), self.labels["real"], dtype=torch.float, device=device)
                 # Forward pass real batch through D
@@ -137,9 +157,11 @@ class Training:
 
                 # Train with all-fake batch
                 # Generate batch of latent vectors
-                noise = torch.randn(b_size, self.latent_embedding_size, 1, 1, device=device)
+                # noise = torch.randn(b_size, self.latent_embedding_size, 1, 1, device=device)
+                vae_latent_embedding = vae_encoder.latent_embedding(data["combined_map"]).to(self.device)
+                vae_latent_embedding = torch.reshape(vae_latent_embedding, (b_size, self.latent_embedding_size, 1, 1))
                 # Generate fake image batch with G
-                fake = generator(noise)
+                fake = generator(vae_latent_embedding)
                 label.fill_(self.labels["fake"])
                 # Classify all fake batch with D
                 output = discriminator(fake.detach()).view(-1)
@@ -195,7 +217,7 @@ class Training:
 
 class Visualize_Model:
     def __init__(self):
-        self.gen_imgs, self.gen_losses, self.dis_losses = Training(n_epochs=20).execute()
+        self.gen_imgs, self.gen_losses, self.dis_losses = Training(n_epochs=5).execute()
 
     def gen_dis_loss_training(self):
         plt.figure(figsize=(10, 5))
