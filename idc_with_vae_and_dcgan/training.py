@@ -34,18 +34,21 @@ class CustomImageDataset(Dataset):
         delta_vmap = torch.reshape(delta_vmap, (1, 64, 64))
         output["delta_vmap"] = delta_vmap
 
+        dI = torch.tensor(data["dI"], dtype=torch.float)
+        output["dI"] = dI
+
         dmap = data['dmap']
-        for idx, row in enumerate(dmap):
-            for jdx, pixel in enumerate(row):
-                if pixel > 300:
-                    dmap[idx][jdx] = 0
+        # for idx, row in enumerate(dmap):
+        #     for jdx, pixel in enumerate(row):
+        #         if pixel > 300:
+        #             dmap[idx][jdx] = 0
 
         dmap = torch.tensor(dmap, dtype=torch.float)
         dmap = torch.reshape(dmap, (1, 64, 64))
-        # nmap = torch.tensor(data['nmap'], dtype=torch.float)
-        # nmap = nmap.permute(2, 0, 1)
-        # combined_map = torch.cat((dmap, nmap), dim=0)
-        combined_map = dmap
+        nmap = torch.tensor(data['nmap'], dtype=torch.float)
+        nmap = nmap.permute(2, 0, 1)
+        combined_map = torch.cat((dmap, nmap), dim=0)
+        # combined_map = dmap
 
         if self.transform:
             combined_map = self.transform(combined_map)
@@ -64,7 +67,7 @@ class Data:
         self.num_workers = 2
         self.device = device
         self.transform = transforms.Compose([
-            transforms.Resize((64, 64)),
+            transforms.Resize((64, 64), antialias=True),
             transforms.Normalize(mean=0.5, std=0.5),  # Add data normalization
         ])
 
@@ -82,10 +85,14 @@ class Training:
         # manualSeed = random.randint(1, 10000) # use if you want new results
         random.seed(self.manualSeed)
         torch.manual_seed(self.manualSeed)
+        # in_channels
+        self.in_channels = 4
         # rgb image
         self.n_channels = 1
         # latent space input
-        self.latent_embedding_size = 64
+        self.latent_dims = 64
+        # total latent dims including dI values
+        self.total_latent_dims = 448
         # size of generator feature map
         self.gen_feature_map_size = 64
         # size of discriminator feature map
@@ -94,12 +101,14 @@ class Training:
         self.labels = {"real": 1.0, "fake": 0.0}
         # loss function - binary cross entropy loss
         self.criterion = nn.BCELoss()
+        # vae optmizer
+        self.vae_optimizer = optim.Adam
         # generator optimizer
         self.gen_optimizer = optim.Adam
         # discriminator optimizer
         self.dis_optimizer = optim.Adam
         # lr
-        self.lr = 0.0002
+        self.lr = 0.02
         # optimizer beta
         self.betas = (0.5, 0.999)
         # number of epochs
@@ -119,17 +128,18 @@ class Training:
 
     def training(self):
         # initialize vae encoder
-        vae_encoder = VanillaVAEEncoder(latent_dim=self.latent_embedding_size)
+        vae_encoder = VanillaVAEEncoder(in_channels=self.in_channels, latent_dim=self.latent_dims)
         # initialize generator
-        generator = Generator(self.latent_embedding_size, self.gen_feature_map_size,
+        generator = Generator(self.total_latent_dims, self.gen_feature_map_size,
                               self.n_channels).to(device=self.device)
         generator.apply(self.weight_initialization)
         # initialize discriminator
         discriminator = Discriminator(self.dis_feature_map_size, self.n_channels).to(self.device)
         discriminator.apply(self.weight_initialization)
 
-        fixed_noise = torch.randn(64, self.latent_embedding_size, 1, 1, device=self.device)
+        fixed_noise = torch.randn(64, self.total_latent_dims, 1, 1, device=self.device)
         criterion = self.criterion
+        vae_optimizer = self.vae_optimizer(vae_encoder.parameters(), lr=self.lr, betas=self.betas)
         gen_optimizer = self.gen_optimizer(generator.parameters(), lr=self.lr, betas=self.betas)
         dis_optimizer = self.dis_optimizer(discriminator.parameters(), lr=self.lr, betas=self.betas)
         dataloader = Data().dataset_prep()
@@ -165,11 +175,15 @@ class Training:
 
                 # Train with all-fake batch
                 # Generate batch of latent vectors
-                # noise = torch.randn(b_size, self.latent_embedding_size, 1, 1, device=device)
-                vae_latent_embedding = vae_encoder.latent_embedding(data["combined_map"]).to(self.device)
-                vae_latent_embedding = torch.reshape(vae_latent_embedding, (b_size, self.latent_embedding_size, 1, 1))
+                combined_map = data["combined_map"]
+                vae_latent_embedding = vae_encoder.forward(combined_map).to(self.device)
+                di = data["dI"].to(self.device)
+                vae_latent_embedding_with_di = torch.cat((vae_latent_embedding, di), dim=1).to(self.device)
+                vae_latent_embed_vector = torch.reshape(vae_latent_embedding_with_di,
+                                                        (b_size, self.total_latent_dims, 1, 1))
+
                 # Generate fake image batch with G
-                fake = generator(vae_latent_embedding)
+                fake = generator(vae_latent_embed_vector)
                 label.fill_(self.labels["fake"])
                 # Classify all fake batch with D
                 output = discriminator(fake.detach()).view(-1)
@@ -192,18 +206,31 @@ class Training:
                 output = discriminator(fake).view(-1)
                 # Calculate G's loss based on this output
                 gen_error = criterion(output, label)
+                # Update VAE Encoder to generate better latent vectors
+                delta_vmaps = data["delta_vmap"].to(self.device)
+                # mse loss for vae
+                mse_loss = nn.MSELoss()
+                # vae error between fake and delta_maps
+                vae_error = mse_loss(fake, delta_vmaps)
+                # total error
+                total_error = gen_error + vae_error
                 # Calculate gradients for G
-                gen_error.backward()
+                total_error.backward()
                 D_G_z2 = output.mean().item()
                 # Update G
                 gen_optimizer.step()
+
+                # vae_error.backward(retain_graph=True)
+                # Update VAE
+                vae_optimizer.step()
 
                 # Output training stats
                 if i % 50 == 0:
                     # Output training stats
                     if i % 50 == 0:
-                        print(f"[{epoch}/{self.n_epochs}][{i}/{len(dataloader)}]\tLoss_D: {dis_error.item():.4f} "
-                              f"\tLoss_G: {gen_error.item():.4f}\tD(x): {D_x:.4f}\tD(G(z)): {D_G_z1:.4f} / {D_G_z2:.4f}")
+                        print(f"[{epoch}/{self.n_epochs}][{i}/{len(dataloader)}]\tVAE Loss: {vae_error.item():.4f}"
+                              f"\tLoss_D: {dis_error.item():.4f} \tLoss_G: {gen_error.item():.4f}\tD(x): {D_x:.4f}"
+                              f"\tD(G(z)): {D_G_z1:.4f} / {D_G_z2:.4f}")
 
                 # Save Losses for plotting later
                 gen_losses.append(gen_error.item())
