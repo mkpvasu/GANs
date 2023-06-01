@@ -1,6 +1,6 @@
 # Illuminance Distribution Control using VAE Encoder and GAN
 
-### Illuminance Distribution Control using VanillaVAEEncoder - DCGAN Image Generation - Python, PyTorch
+### Illuminance Distribution Control using integrated Vanilla VAE Encoder and GAN - Python, PyTorch
 * This project is being performed in collaboration with Colin Acton and SangYoon Back at 
 MACS Lab advised by Dr. Xu Chen.
 * Implemented Vanilla VAE Encoder to create latent embeddings based on depth map and
