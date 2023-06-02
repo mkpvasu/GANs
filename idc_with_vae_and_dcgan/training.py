@@ -68,7 +68,7 @@ class Data:
         self.device = device
         self.transform = transforms.Compose([
             transforms.Resize((64, 64), antialias=True),
-            transforms.Normalize(mean=0.5, std=0.5),  # Add data normalization
+            transforms.Normalize(mean=[0.5, 0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5, 0.5]),  # Add data normalization
         ])
 
     def dataset_prep(self):
@@ -105,6 +105,8 @@ class Training:
         self.vae_criterion = nn.KLDivLoss(reduction="batchmean")
         # vae optmizer
         self.vae_optimizer = optim.Adam
+        # vae_loss_hyperparameter
+        self.vae_loss_param = 0.01
         # generator optimizer
         self.gen_optimizer = optim.Adam
         # discriminator optimizer
@@ -217,7 +219,7 @@ class Training:
                 softmax_d_vmaps = nn.functional.softmax(delta_vmaps, dim=2)
                 vae_error = vae_criterion(softmax_fake, softmax_d_vmaps)
                 # total error
-                total_error = gen_error + (-vae_error)
+                total_error = gen_error + (- self.vae_loss_param * vae_error)
                 # Calculate gradients for G
                 total_error.backward()
                 D_G_z2 = output.mean().item()
