@@ -214,7 +214,7 @@ class Training:
                 delta_vmaps = data["delta_vmap"].to(self.device)
                 # vae error between fake and delta_maps
                 softmax_fake = nn.functional.softmax(fake, dim=2)
-                softmax_d_vmaps = nn.functional.softmax(delta_vmaps, dim=3)
+                softmax_d_vmaps = nn.functional.softmax(delta_vmaps, dim=2)
                 vae_error = vae_criterion(softmax_fake, softmax_d_vmaps)
                 # total error
                 total_error = gen_error + (-vae_error)
