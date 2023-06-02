@@ -101,6 +101,8 @@ class Training:
         self.labels = {"real": 1.0, "fake": 0.0}
         # loss function - binary cross entropy loss
         self.criterion = nn.BCELoss()
+        # loss function for VAE
+        self.vae_criterion = nn.KLDivLoss(reduction="batchmean")
         # vae optmizer
         self.vae_optimizer = optim.Adam
         # generator optimizer
@@ -108,7 +110,7 @@ class Training:
         # discriminator optimizer
         self.dis_optimizer = optim.Adam
         # lr
-        self.lr = 0.02
+        self.lr = 0.005
         # optimizer beta
         self.betas = (0.5, 0.999)
         # number of epochs
@@ -139,6 +141,7 @@ class Training:
 
         fixed_noise = torch.randn(64, self.total_latent_dims, 1, 1, device=self.device)
         criterion = self.criterion
+        vae_criterion = self.vae_criterion
         vae_optimizer = self.vae_optimizer(vae_encoder.parameters(), lr=self.lr, betas=self.betas)
         gen_optimizer = self.gen_optimizer(generator.parameters(), lr=self.lr, betas=self.betas)
         dis_optimizer = self.dis_optimizer(discriminator.parameters(), lr=self.lr, betas=self.betas)
@@ -177,6 +180,7 @@ class Training:
                 # Generate batch of latent vectors
                 combined_map = data["combined_map"]
                 vae_latent_embedding = vae_encoder.forward(combined_map).to(self.device)
+                vae_latent_embedding = nn.functional.normalize(vae_latent_embedding)
                 di = data["dI"].to(self.device)
                 vae_latent_embedding_with_di = torch.cat((vae_latent_embedding, di), dim=1).to(self.device)
                 vae_latent_embed_vector = torch.reshape(vae_latent_embedding_with_di,
@@ -208,12 +212,12 @@ class Training:
                 gen_error = criterion(output, label)
                 # Update VAE Encoder to generate better latent vectors
                 delta_vmaps = data["delta_vmap"].to(self.device)
-                # mse loss for vae
-                mse_loss = nn.MSELoss()
                 # vae error between fake and delta_maps
-                vae_error = mse_loss(fake, delta_vmaps)
+                softmax_fake = nn.functional.softmax(fake, dim=2)
+                softmax_d_vmaps = nn.functional.softmax(delta_vmaps, dim=3)
+                vae_error = vae_criterion(softmax_fake, softmax_d_vmaps)
                 # total error
-                total_error = gen_error + vae_error
+                total_error = gen_error + (-vae_error)
                 # Calculate gradients for G
                 total_error.backward()
                 D_G_z2 = output.mean().item()
@@ -272,7 +276,7 @@ class Visualize_Model:
 
         HTML(ani.to_jshtml())
         plt.show()
-        ani.save("vae_dcgan_animation.gif", writer="pillow", fps=2)
+        ani.save("idc_vae_dcgan_animation.gif", writer="pillow", fps=1)
 
 
 def main():
