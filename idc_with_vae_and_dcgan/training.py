@@ -1,10 +1,12 @@
 import os
 import glob
 import random
+import shutil
 import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.optim as optim
+import torchvision.utils
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
@@ -111,8 +113,12 @@ class Training:
         self.gen_optimizer = optim.Adam
         # discriminator optimizer
         self.dis_optimizer = optim.Adam
-        # lr
-        self.lr = 0.005
+        # vae encoder learning rate
+        self.vae_lr = 0.001
+        # generator learning rate
+        self.gen_lr = 0.005
+        # discriminator learning rate
+        self.dis_lr = 0.005
         # optimizer beta
         self.betas = (0.5, 0.999)
         # number of epochs
@@ -144,9 +150,9 @@ class Training:
         fixed_noise = torch.randn(64, self.total_latent_dims, 1, 1, device=self.device)
         criterion = self.criterion
         vae_criterion = self.vae_criterion
-        vae_optimizer = self.vae_optimizer(vae_encoder.parameters(), lr=self.lr, betas=self.betas)
-        gen_optimizer = self.gen_optimizer(generator.parameters(), lr=self.lr, betas=self.betas)
-        dis_optimizer = self.dis_optimizer(discriminator.parameters(), lr=self.lr, betas=self.betas)
+        vae_optimizer = self.vae_optimizer(vae_encoder.parameters(), lr=self.vae_lr, betas=self.betas)
+        gen_optimizer = self.gen_optimizer(generator.parameters(), lr=self.gen_lr, betas=self.betas)
+        dis_optimizer = self.dis_optimizer(discriminator.parameters(), lr=self.dis_lr, betas=self.betas)
         dataloader = Data().dataset_prep()
 
         # Lists to keep track of progress
@@ -260,6 +266,14 @@ class Visualize_Model:
     def __init__(self):
         self.gen_imgs, self.gen_losses, self.dis_losses = Training(n_epochs=10).execute()
 
+    def save_gen_images(self):
+        path = os.path.join(os.getcwd(), "generated_images")
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        os.makedirs(path)
+        for i in range(len(self.gen_imgs)):
+            torchvision.utils.save_image(tensor=self.gen_imgs[i, :, :, :], fp=os.path.join(path, f"{i:02d}.jpg"))
+
     def gen_dis_loss_training(self):
         plt.figure(figsize=(10, 5))
         plt.title("Generator and Discriminator Loss During Training")
@@ -279,6 +293,7 @@ class Visualize_Model:
         HTML(ani.to_jshtml())
         plt.show()
         ani.save("idc_vae_dcgan_animation.gif", writer="pillow", fps=1)
+        # self.save_gen_images()
 
 
 def main():
