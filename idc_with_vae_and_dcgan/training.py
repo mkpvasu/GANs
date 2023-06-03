@@ -108,7 +108,7 @@ class Training:
         # vae optmizer
         self.vae_optimizer = optim.Adam
         # vae_loss_hyperparameter
-        self.vae_loss_param = 0.01
+        self.vae_loss_scaling_factor = 0.01
         # generator optimizer
         self.gen_optimizer = optim.Adam
         # discriminator optimizer
@@ -225,7 +225,7 @@ class Training:
                 softmax_d_vmaps = nn.functional.softmax(delta_vmaps, dim=2)
                 vae_error = vae_criterion(softmax_fake, softmax_d_vmaps)
                 # total error
-                total_error = gen_error + (- self.vae_loss_param * vae_error)
+                total_error = gen_error + (- self.vae_loss_scaling_factor * vae_error)
                 # Calculate gradients for G
                 total_error.backward()
                 D_G_z2 = output.mean().item()
