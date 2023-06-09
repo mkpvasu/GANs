@@ -21,6 +21,7 @@ from vae_encoder import VanillaVAEEncoder
 device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
+
 class CustomImageDataset(Dataset):
     def __init__(self, path, pattern, transform=None):
         self.file_list = glob.glob(os.path.join(path, pattern))
@@ -126,6 +127,8 @@ class Training:
         self.dis_lr = 0.005
         # optimizer beta
         self.betas = (0.5, 0.999)
+        # batch size
+        self.batch_size = 16
         # number of epochs
         self.n_epochs = n_epochs
         # device to run model
@@ -167,7 +170,15 @@ class Training:
         dis_losses = []
         val_gen_losses = []
         val_dis_losses = []
-        iters = 0
+        iters, train_iters, val_iters = 0, 0, 0
+
+        # create folder to save the generated and real images for comparison
+        train_imgs_path = os.path.join(os.getcwd(), "generated_and_real_images", "train_imgs")
+        val_imgs_path = os.path.join(os.getcwd(), "generated_and_real_images", "val_imgs")
+        for f_path in [train_imgs_path, val_imgs_path]:
+            if os.path.exists(f_path):
+                shutil.rmtree(f_path)
+            os.makedirs(f_path)
 
         print("Starting Training Loop...")
         # For each epoch
@@ -189,11 +200,11 @@ class Training:
                     # Train with all-real batch
                     discriminator.zero_grad()
                     # Format batch
-                    real_cpu = data["delta_vmap"].to(device)
-                    b_size = real_cpu.size(0)
+                    real = data["delta_vmap"].to(device)
+                    b_size = real.size(0)
                     label = torch.full((b_size,), self.labels["real"], dtype=torch.float, device=device)
                     # Forward pass real batch through D
-                    output = discriminator(real_cpu).view(-1)
+                    output = discriminator(real).view(-1)
                     # Calculate loss on all-real batch
                     dis_error_real = criterion(output, label)
                     if mode == "train":
@@ -213,6 +224,7 @@ class Training:
 
                     # Generate fake image batch with G
                     fake = generator(vae_latent_embed_vector)
+                    # labels for fake image batch
                     label.fill_(self.labels["fake"])
                     # Classify all fake batch with D
                     output = discriminator(fake.detach()).view(-1)
@@ -268,6 +280,15 @@ class Training:
                         dis_loss += dis_error.item()
                         train_batches += 1
 
+                        # save fake images generated from the embedding vector to compare with corresponding real images
+                        if epoch == self.n_epochs - 1:
+                            for i in range(len(fake)):
+                                torchvision.utils.save_image(tensor=fake[i, :, :, :],
+                                                             fp=os.path.join(train_imgs_path, f"{train_iters*self.batch_size + i:03d}_gen.jpg"))
+                                torchvision.utils.save_image(tensor=real[i, :, :, :],
+                                                             fp=os.path.join(train_imgs_path, f"{train_iters*self.batch_size + i:03d}_real.jpg"))
+                            train_iters += 1
+
                         # Check how the generator is doing by saving G's output on fixed_noise
                         if (iters % 500 == 0) or ((epoch == self.n_epochs - 1) and (i == len(train_dataloader) - 1)):
                             with torch.no_grad():
@@ -278,12 +299,21 @@ class Training:
                         val_dis_loss += dis_error.item()
                         val_batches += 1
 
+                        # save fake images generated from the embedding vector to compare with corresponding real images
+                        if epoch == self.n_epochs - 1:
+                            for i in range(len(fake)):
+                                torchvision.utils.save_image(tensor=fake[i, :, :, :],
+                                                             fp=os.path.join(val_imgs_path, f"{val_iters*self.batch_size + i:03d}_gen.jpg"))
+                                torchvision.utils.save_image(tensor=real[i, :, :, :],
+                                                             fp=os.path.join(val_imgs_path, f"{val_iters*self.batch_size + i:03d}_real.jpg"))
+                            val_iters += 1
+
                         # Check how the generator is doing by saving G's output on fixed_noise
                         if (iters % 500 == 0) or ((epoch == self.n_epochs - 1) and (i == len(loader) - 1)):
                             fake = generator(fixed_noise).detach().cpu()
                             val_img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
-                iters += 1
+                    iters += 1
 
                 if mode == "train":
                     # Save Losses for plotting later
@@ -301,17 +331,9 @@ class Training:
 
 
 class VisualizeModel:
-    def __init__(self):
-        self.gen_imgs, self.val_gen_imgs, self.gen_losses, self.val_dis_losses, \
-            self.val_gen_losses, self.dis_losses = Training(n_epochs=30).execute()
-
-    def save_gen_images(self):
-        path = os.path.join(os.getcwd(), "generated_images")
-        if os.path.exists(path):
-            shutil.rmtree(path)
-        os.makedirs(path)
-        for i in range(len(self.gen_imgs)):
-            torchvision.utils.save_image(tensor=self.gen_imgs[i, :, :, :], fp=os.path.join(path, f"{i:02d}.jpg"))
+    def __init__(self, n_epochs):
+        self.gen_grid_imgs, self.val_gen_grid_imgs, self.gen_losses, \
+            self.val_dis_losses, self.val_gen_losses, self.dis_losses = Training(n_epochs=n_epochs).execute()
 
     def gen_dis_loss_training(self):
         plt.figure(figsize=(10, 5))
@@ -328,19 +350,18 @@ class VisualizeModel:
     def gen_output(self):
         fig = plt.figure(figsize=(8, 8))
         plt.axis("off")
-        ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in self.gen_imgs]
+        ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in self.gen_grid_imgs]
         ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
 
         HTML(ani.to_jshtml())
         plt.show()
         ani.save("idc_vae_dcgan_animation.gif", writer="pillow", fps=1)
-        # self.save_gen_images()
 
 
 def main():
-    viz_model = VisualizeModel()
+    viz_model = VisualizeModel(n_epochs=10)
     viz_model.gen_output()
-    viz_model.gen_dis_loss_training()
+    # viz_model.gen_dis_loss_training()
 
 
 if __name__ == "__main__":
